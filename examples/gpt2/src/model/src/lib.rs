@@ -9,6 +9,7 @@ use crate::auth::ensure_authorized;
 pub mod auth;
 pub mod storage;
 pub mod llm;
+//pub mod benchmarks; //demo benchmarks
 
 // Re-export common items from storage
 pub use storage::{
@@ -25,6 +26,7 @@ pub use llm::{
     gpt2::Config,
     mask_cache::VecMaskCache,
 };
+
 
 type Memory = VirtualMemory<DefaultMemoryImpl>;
 
@@ -94,5 +96,4 @@ fn post_upgrade() {
     let caller = ic_cdk::caller();
     ensure_authorized(caller);
 }
-
 

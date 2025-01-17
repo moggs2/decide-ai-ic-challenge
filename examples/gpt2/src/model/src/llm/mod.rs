@@ -1,3 +1,5 @@
+//src/llm/mod.rs
+
 pub mod mask_cache;
 pub mod gpt2;
 pub mod candle;
@@ -9,9 +11,10 @@ pub use candle::EmptyResult;
 pub use gpt2::Config;
 pub use mask_cache::VecMaskCache;
 
-use crate::llm::candle::{TokenIDsResult, InferenceResult, InferenceRecord, internal_inference};
+//use crate::llm::candle::{TokenIDsResult, InferenceResult, InferenceRecord, internal_inference};
+use crate::llm::candle::{internal_inference};
 use crate::llm::tokenizer::{TokenizerResult, tokenize, decode_batch};
-use crate::auth::is_authenticated;
+//use crate::auth::is_authenticated;
 
 const MAX_TOKENS: u8 = 100;
 const MIN_TEMP: f64 = 0.0;

@@ -8,7 +8,7 @@ use crate::storage::{
 };
 use crate::llm::{
     sample,
-    gpt2::{GPT2, Config, KVCache, MaskCache},
+    gpt2::{GPT2, Config, KVCache},
     mask_cache::VecMaskCache,
 };
 use candle_nn::VarBuilder;
@@ -43,7 +43,7 @@ fn internal_setup_model() -> Result<(), anyhow::Error> {
 
     let safetensors_slice = safetensors_bytes.as_ref();
 
-    let vb = unsafe { VarBuilder::from_slice_safetensors(safetensors_slice, dtype, &device)? };
+    let vb = VarBuilder::from_slice_safetensors(safetensors_slice, dtype, &device)?;
 
     GPT2_KV_CACHE.with(|cell| {
         let cache = KVCache::new(config.n_layer, true);  // Enable caching
@@ -163,5 +163,246 @@ pub fn internal_inference(tokens: Vec<u32>, gen_iter: u8, temperature: f64, eos:
 
 
 
+#[cfg(feature = "canbench-rs")]
+mod inference_benchmarks {
+    use super::*;
+    use canbench_rs::bench;
+    use std::println; // Add explicit println import
+
+    const TYPICAL_PROMPT: [u32; 4] = [1, 2, 3, 4];
+    const TYPICAL_TEMP: f64 = 0.7;
+    const EOS_TOKEN: u32 = 50257;
+
+    fn initialize_model() -> Result<(), anyhow::Error> {
+        println!("Starting model initialization...");
+
+        let device = Device::Cpu;
+        let dtype = DType::F32;
+
+        // Load and verify config
+        //let config_bytes = include_bytes!("./canbench_assets/config.json");
+        let config_bytes = include_bytes!("../../../../canbench_assets/config.json");
+        let config: Config = from_slice(config_bytes)
+            .map_err(|e| {
+                println!("Failed to parse config: {}", e);
+                anyhow!("Config parse error: {}", e)
+            })?;
+
+        // Calculate required size
+        const MODEL_SIZE: usize = 510368814; // Your exact file size
+        let pages = ic_cdk::api::stable::stable_size();
+        let available_bytes = pages as usize * 65536;
+
+        println!("Stable memory pages: {}, bytes available: {}", pages, available_bytes);
+
+        if available_bytes < MODEL_SIZE {
+            return Err(anyhow!("Not enough stable memory. Need {} bytes, have {}",
+                MODEL_SIZE, available_bytes));
+        }
+
+        // Read the model
+        let mut model_bytes = vec![0u8; MODEL_SIZE];
+        ic_cdk::api::stable::stable_read(0, &mut model_bytes);
+        println!("Read {} bytes from stable memory", MODEL_SIZE);
+
+        println!("Creating VarBuilder...");
+        let vb = VarBuilder::from_slice_safetensors(&model_bytes, dtype, &device)?;
+
+        // Initialize caches
+        println!("Initializing caches...");
+        GPT2_KV_CACHE.with(|cell| {
+            let cache = KVCache::new(config.n_layer, true);
+            *cell.borrow_mut() = Some(cache);
+        });
+
+        GPT2_MASK_CACHE.with(|cell| {
+            let mask_cache = VecMaskCache::new(107, config.n_head, device.clone())
+                .expect("Failed to create VecMaskCache");
+            *cell.borrow_mut() = Some(mask_cache);
+        });
+
+        println!("Loading GPT2 model...");
+        GPT2_MODEL.with(|cell| -> Result<(), anyhow::Error> {
+            let model = GPT2::load(vb.pp("transformer"), &config)?;
+            *cell.borrow_mut() = Some(model);
+            println!("Model loaded successfully!");
+            Ok(())
+        })?;
+
+        Ok(())
+    }
 
 
+    #[bench(raw)]
+    fn initialization_only() -> canbench_rs::BenchResult {
+        // Clear any existing model state
+        GPT2_MODEL.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        GPT2_KV_CACHE.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+        GPT2_MASK_CACHE.with(|cell| {
+            *cell.borrow_mut() = None;
+        });
+
+        canbench_rs::bench_fn(|| {
+            // Do the actual initialization inside the benchmark
+            if let Err(e) = initialize_model() {
+                println!("Failed to initialize model: {}", e);
+                return;
+            }
+
+            // Verify initialization
+            let model_state = GPT2_MODEL.with(|cell| {
+                let is_some = cell.borrow().is_some();
+                println!("Model loaded state: {}", is_some);
+                is_some
+            });
+
+            if !model_state {
+                println!("Model not properly initialized");
+            }
+        })
+    }
+
+
+    #[bench(raw)]
+    fn inference_bench() -> canbench_rs::BenchResult {
+        println!("Starting inference benchmark...");
+
+        // Initialize model state
+        match initialize_model() {
+            Ok(_) => println!("Model initialized successfully"),
+            Err(e) => {
+                println!("Failed to initialize model: {}", e);
+                return canbench_rs::bench_fn(|| {});
+            }
+        }
+
+        let model_state = GPT2_MODEL.with(|cell| {
+            let is_some = cell.borrow().is_some();
+            println!("Model loaded state: {}", is_some);
+            is_some
+        });
+
+        if !model_state {
+            println!("Model not properly initialized");
+            return canbench_rs::bench_fn(|| {});
+        }
+
+        println!("Starting inference with prompt length: {}", TYPICAL_PROMPT.len());
+
+        canbench_rs::bench_fn(|| {
+            match internal_inference(
+                TYPICAL_PROMPT.to_vec(),
+                5,
+                TYPICAL_TEMP,
+                EOS_TOKEN
+            ) {
+                Ok(tokens) => println!("Inference generated {} tokens", tokens.len()),
+                Err(e) => println!("Inference failed: {}", e),
+            };
+        })
+    }
+
+
+
+    use paste::paste;
+
+    fn create_prompt(length: usize) -> Vec<u32> {
+        let mut prompt = Vec::with_capacity(length);
+        for i in 0..length {
+            prompt.push(BASE_PROMPT[i % BASE_PROMPT.len()]);
+        }
+        prompt
+    }
+
+    const BASE_PROMPT: &[u32] = &[1, 2, 3, 4];
+
+
+    // Define individual benchmark functions instead of using nested repetition
+    macro_rules! define_bench_fn {
+        ($input_len:expr, $gen_len:expr) => {
+            paste! {
+                #[bench(raw)]
+                fn [<inference_bench_input_ $input_len _gen_ $gen_len>]() -> canbench_rs::BenchResult {
+                    println!("Starting inference benchmark with input length {} and gen length {}",
+                            $input_len, $gen_len);
+
+                    // Initialize model if needed
+                    let model_state = GPT2_MODEL.with(|cell| cell.borrow().is_some());
+                    if !model_state {
+                        if let Err(e) = initialize_model() {
+                            println!("Failed to initialize model: {}", e);
+                            return canbench_rs::bench_fn(|| {});
+                        }
+                    }
+
+                    let prompt = create_prompt($input_len);
+
+                    canbench_rs::bench_fn(|| {
+                        match internal_inference(
+                            prompt.clone(),
+                            $gen_len,
+                            TYPICAL_TEMP,
+                            EOS_TOKEN
+                        ) {
+                            Ok(tokens) => println!(
+                                "Input len: {}, Gen len: {}, Output tokens: {}",
+                                $input_len, $gen_len, tokens.len()
+                            ),
+                            Err(e) => println!("Inference failed: {}", e),
+                        };
+                    })
+                }
+            }
+        };
+    }
+
+    // Call the macro for each combination explicitly
+    define_bench_fn!(1, 1);
+    define_bench_fn!(1, 2);
+    define_bench_fn!(1, 4);
+    define_bench_fn!(1, 8);
+    define_bench_fn!(2, 1);
+    define_bench_fn!(2, 2);
+    define_bench_fn!(2, 4);
+    define_bench_fn!(2, 8);
+    define_bench_fn!(4, 1);
+    define_bench_fn!(4, 2);
+    define_bench_fn!(4, 4);
+    define_bench_fn!(4, 8);
+    define_bench_fn!(8, 1);
+    define_bench_fn!(8, 2);
+    define_bench_fn!(8, 4);
+    define_bench_fn!(8, 8);
+    define_bench_fn!(16, 1);
+    define_bench_fn!(16, 2);
+    define_bench_fn!(16, 4);
+    define_bench_fn!(16, 8);
+    define_bench_fn!(32, 1);
+    define_bench_fn!(32, 2);
+    define_bench_fn!(32, 4);
+    define_bench_fn!(32, 8);
+    define_bench_fn!(64, 1);
+    define_bench_fn!(64, 2);
+    define_bench_fn!(64, 4);
+    define_bench_fn!(64, 8);
+    define_bench_fn!(128, 1);
+    define_bench_fn!(128, 2);
+    define_bench_fn!(128, 4);
+    define_bench_fn!(128, 8);
+    define_bench_fn!(256, 1);
+    define_bench_fn!(256, 2);
+    define_bench_fn!(256, 4);
+    define_bench_fn!(256, 8);
+    define_bench_fn!(512, 1);
+    define_bench_fn!(512, 2);
+    define_bench_fn!(512, 4);
+    define_bench_fn!(512, 8);
+    define_bench_fn!(1024, 1);
+    define_bench_fn!(1024, 2);
+    define_bench_fn!(1024, 4);
+    define_bench_fn!(1024, 8);
+}

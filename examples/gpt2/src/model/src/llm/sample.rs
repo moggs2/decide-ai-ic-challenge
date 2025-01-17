@@ -1,4 +1,4 @@
-use candle::{DType, Error, Result, Tensor};
+use candle::{DType, Result, Tensor};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
