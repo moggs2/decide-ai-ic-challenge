@@ -65,3 +65,6 @@ The table of instructions from the forked repo to compare:
 | 1024 | 445.26B | 445.26B | 445.26B | 445.26B |
 
 The ratio one cycle to one instruction should be 1 cycle x 10.
+
+## Cost related views
+The model became inefficient when the input word were larger than 8 words and the output larger than 4 words. Sometimes the answer was totally wrong, sometimes the sentences were cut off or the same answer was listed twice. Moreover the costs increase much steeper when the word input is larger than 8. The output costs per word remains steady.
