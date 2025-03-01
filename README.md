@@ -7,7 +7,7 @@ For starting out the decide-ai-ic repo was forked on GitHub.
 Then the requirements were installed on a Debian 12 VPS like described in the repo.
 
 One change was made because Rust ws outdated:
-"rustup target add wasm32-wasi" was changed to "rustup target add wasm32-wasip1". Any missing wasm packageswhich came up during installatin were installed as well. 
+"rustup target add wasm32-wasi" was changed to "rustup target add wasm32-wasip1". Any missing wasm packages which came up during installatin were installed as well. 
 The dfx.json was changed accordingly and can be found in this repo.
 
 The canister was started locally with "dfx start" and "dfx deploy". Different questions were checked for answers and cycles.
