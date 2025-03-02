@@ -44,7 +44,7 @@ The cost for additional tokens did not remain stable for 3 additional tokens. Th
 
    - Generating 1 additional token: ~83M cycles
    - Generating 3 additional tokens: ~258M cycles (129M per token)
-   - Generating 7 additional tokens: ~607MM cycles (87M per token)
+   - Generating 7 additional tokens: ~607M cycles (87M per token)
 
 Another similarity is that the cycle count becomes steeper when the word input increases in comparison to the output. It is similar to the previous findings.
 The localhost cannot execute more than 4B cycles. Therefore, the input length of 128 was not possible.
